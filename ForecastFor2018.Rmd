@@ -1,0 +1,964 @@
+---
+title: "Targeting Segment Size Forecasting to Meet Higher Impression Targets"
+author: "Giollamhir"
+date: "July 8, 2017"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(width=135) # option makes page wide enough for options summary at end to be fully shown
+
+library("lubridate")
+library(tidyverse)
+library(gapminder)
+source("functions.R")
+
+```
+
+# Target Segment Size Forecasting to Meet New Impression Targets
+Because not all website visitors register or log in consistently, a client company is using behavioral indicators to identify what they refer to as "lookalike segments" for targeting relevant advertising. This behavioral targeting (BT) has been a very successful program.  For 2018, this website wants to  increase their target numbers for ad impressions to these segments. Ad "impressions"" means views of individual ads. So if there are two advertisements visible on a page a visitor looks at, that is two ad "impressions".
+
+ The client company is currently targeting a stringently qualified subset of the lookalike segment., and the current segment population sizes would not afford the new target impression numbers.  Based on the results of this analysis, I will be adjusting the logic that allows site visitors into the target segments to include more visitors while still using effective qualification methods. 
+ 
+ The rules used in behavioral qualification program are out of scope of this discussion, but here are a few comments to provide context: Our confidence level for lookalike segment composition is monitored, as is the population size itself. Adjustments are made periodically to ensure both. Because of our need to maintain confidence levels and define lookalikes as stringently as possible, the accurate forecast of the necessary size of the segment population to be developed in this report is a critical consideration. 
+
+Components of the analysis to forecast segment size needed to support the new goals include: 
+
+* Real-time data on number of users from each segment actively on the site day to day 
+* How many actual advertisement impressions these current, active segment populations yield
+
+By looking at how many users in a segment ("BT population" or "BTpop") result in *n* impressions, we can forecast how many users will be needed in future segments to guarantee future target impression numbers.
+ 
+Complicating factors include: 
+
+* Impressions are served by an ad server making algorithmic ad display decisions on each page load. This algorithm prioritizes between many campaigns and many levels of target prioritization (BT is second or third priority, after various context-specific rules and various rules based on known logged-in user data). 
+
+      + It's not possible to gather observations without this algorithmic "interference". 
+      + We can assume the ad serving algorithms  will continue to work consistently in 2018 as during the observation period.
+
+ 
+ 
+ 
+* Observations can only be collected for campaigns that are live
+
+    + Some segments were not running campaigns during months observed.
+    + Several segments ran campaigns, but not at full capacity of maximum possible number of campaigns.
+    + Some segments ran, but with configured serving constraints or timing issues by advertiser request
+  
+
+
+* Higher-level considerations such as annual seasonal patterns and total number of campaigns will be best analyzed when we have more longitudinal data. A few additional words on these are included at the end of the report.
+
+  
+April and prior months ran with target limits set into the ad server, imposing an artificial constraint on observations. For May and June, we ran these programs "uncapped" to collect more accurate observations in impression capacity of current BT segment population sizes. This report focuses on June because June has the best test segments to forecast from.
+
+## Business inputs 
+Proposed target numbers for the new, higher impression advertisement impression goals for 2018 are listed below. 
+
+
+```{r goalInputs, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, warnings=FALSE}
+targets <- read.csv(file = "TargetingInputs.csv")
+targets <- (subset(targets, select = c("Segment","NewBTPP","Campaigns")))
+targets$NewTOT.Target <- targets$NewBTPP * targets$Campaigns
+targets
+
+```
+
+
+## Segment Populations 
+
+The BT program involves writing cookies for the segments to be targeted. Since we only want to count users who are active, we can use an analytics report to determine daily counts of users who were on the site with a cookie indicator for each segment. 
+
+
+```{r btPopulationIngestion,  echo=FALSE, message = FALSE, warning = FALSE, warnings = FALSE}
+# import BT population numbers using custom function defined in functions.R
+btsJune <- getBTpop("AA-June-2017-BTCookieSegment Visits.csv")
+str(btsJune)
+
+
+```
+
+
+## June 2017 Uncapped BT Ad Serving Test Results
+
+June impressions were reported in the typical  raw format that will need to be ingested for typical operational maintenance.  
+
+First, a summary of campaigns that ran through June. Aside from the overall considerations listed above, there are also sometimes special requests from the client on how we serve ads that impose their own constraints. The table below lists what campaigns actually  ran (not all segments always run, and not necessarily to the maximum number of campaigns per segment).
+
+* "CampNum" denotes total potential campaigns for that segment
+
+* The *Consider* column indicates any serving considerations (impressions will be lower due to constraints): SR means serving restrictions, and SP means Special Pacing.
+
+```{r campData,  echo = FALSE, message = FALSE, warning = FALSE, warnings = FALSE}
+
+
+# bring in ad campaign/ overall business data summary from ad sales team listing what campagins had serving restrictions, how many campaigns were sold for each segment, etc. 
+juneImpsInfo <- read.csv(file = "AdServCampaignInfo-midJune-2017.csv", na.strings=c("NA","NaN", " "))
+subset(juneImpsInfo, select = c("Segment","Campaign","CampNum","Consider"))
+
+# Operational Note: 
+# The most efficient way in terms of maintenance is to standardize file names and specify changes (date in filename and probably directory name) 
+# So they can be quickly swapped out in future months to rerun this analysis
+
+```
+
+## June Campaign Data 
+Campaign impression logs are exported from the ad server in individual reports listing one campaign at a time, with impression numbers per ad position on the page (there are 2-4 possible positions depending on the template) per day. The following process ingests the campaign reports, consolidates all impressions per day, appends the relevant Behavioral Targeting segment population, and then binds the data frame for that campaign to an overall summary of all impression activity in June. I also add a "DoW" column noting the day of the week associated with that date, because day of week is critical to all calculations (more on that later). 
+
+The code is ingesting all segments that had any campaigns live during the observation period. 
+
+The structure of the assembled data we'll analyze is 224 rows (or "observations"), with 6 columns: 
+
+* **Segments:**: Labeled Seg 
+* **Campaign:**:Labeled Camp
+* **Date**: Labeled Date 
+* **Impressions:**: Labeled Imps
+* **Behavioral Targeting Segment Population:**: Labeled BTpop
+* **Day of the Week (calculated from Date)**: Labeled DoW 
+
+```{r impData,  echo = FALSE, message = FALSE, warning = FALSE, warnings = FALSE}
+
+#Ingest June Campaign Files, on per each campaign
+# Using two custom functions defined in functions.R
+
+
+ # first pulls in impression data from indepenent csv files 
+ # second appends BT segment population from bts file
+
+
+ impsC_jn <- impIngest("Seg-C_Camp-H_BT_IMPS-June-2017.csv")
+ impsC_jn <- impProcess(impsC_jn,"C","H",btsJune$C)
+ 
+
+ #create dataframe for all June impression activity
+juneActivity <-  impsC_jn
+# rm(impsC_jn) # keep for visualization later
+
+ #run remaining data so they are incorporated into the juneActivity summary and then removed
+
+#SEGMENT P
+
+impsP_cH_jn <- impIngest("Seg-P_Camp-GH_BT_IMPS-June-2017.csv")
+ impsP_cH_jn <- impProcess(impsP_cH_jn,"P","GH",btsJune$P)
+ juneActivity <- rbind(juneActivity, impsP_cH_jn)
+rm(impsP_cH_jn)
+
+
+ impsE_jn <- impIngest("Seg-E_Camp-L_BT_IMPS-June-2017.csv")
+  impsE_jn <- impProcess(impsE_jn,"E","L-Jn",btsJune$E) # b/c there's a seg E camp L in May need to distinguish campaign label
+
+ juneActivity <- rbind(juneActivity, impsE_jn)
+rm(impsE_jn)
+
+
+
+#Process the four HO segments - ingest then append rows to juneActivity df for analysis
+impsHO_cAD_jn <- impIngest("Seg-HO_Camp-AD_BT_IMPS-June-2017.csv")
+ impsHO_cAD_jn <- impProcess(impsHO_cAD_jn,"HO","AD",btsJune$HO)
+ 
+ juneActivity <- rbind(juneActivity, impsHO_cAD_jn)
+allHO <- impsHO_cAD_jn
+rm(impsHO_cAD_jn)
+
+ #AM
+impsHO_cAM_jn <- impIngest("Seg-HO_Camp-AM_BT_IMPS-June-2017.csv")
+ impsHO_cAM_jn <- impProcess(impsHO_cAM_jn,"HO","AM",btsJune$HO)
+ 
+ juneActivity <- rbind(juneActivity, impsHO_cAM_jn)
+ allHO <- rbind(allHO, impsHO_cAM_jn) # add to df for a sample visualization
+rm(impsHO_cAM_jn)
+
+ 
+ #K
+impsHO_cK_jn <- impIngest("Seg-HO_Camp-K_BT_IMPS-June-2017.csv")
+ impsHO_cK_jn <- impProcess(impsHO_cK_jn,"HO","K",btsJune$HO)
+ 
+ juneActivity <- rbind(juneActivity, impsHO_cK_jn)
+  allHO <- rbind(allHO, impsHO_cK_jn) # add to df for a sample visualization
+
+rm(impsHO_cK_jn)
+ 
+ #N
+ impsHO_cN_jn <- impIngest("Seg-HO_Camp-N_BT_IMPS-June-2017.csv")
+ impsHO_cN_jn <- impProcess(impsHO_cN_jn,"HO","N-Jn",btsJune$HO) # Disginguish HO-N in June from HO-N other months
+ juneActivity <- rbind(juneActivity, impsHO_cN_jn)
+ allHO <- rbind(allHO, impsHO_cN_jn) # add to df for a sample visualization
+
+rm(impsHO_cN_jn)
+
+ #Show as a sample for multi-segment campaign and BT data combined
+
+
+
+# Segment I 
+
+impsI_cGH_jn <- impIngest("Seg-I_Camp-H_BT_IMPS-June-2017.csv")
+ impsI_cGH_jn <- impProcess(impsI_cGH_jn,"I","H",btsJune$I)
+ juneActivity <- rbind(juneActivity, impsI_cGH_jn)
+rm(impsI_cGH_jn)
+
+
+# INSERT ULM WHEN HAVE FINAL 2 WEEKS OF DATA
+
+
+
+# SegMent R (one test campaign)
+impsR_cH_jn <- impIngest("Seg-R_Camp-H_BT_IMPS-June-2017.csv")
+ impsR_cH_jn <- impProcess(impsR_cH_jn,"R","H",btsJune$R)
+
+ juneActivity <- rbind(juneActivity, impsR_cH_jn)
+ rm(impsR_cH_jn)
+
+
+ impsG_cBS_jn <- impIngest("Seg-G_Camp-BS_BT_IMPS-June-2017.csv")
+ impsG_cBS_jn <- impProcess(impsG_cBS_jn,"G","BS",btsJune$G)
+ juneActivity <- rbind(juneActivity, impsG_cBS_jn)
+rm(impsG_cBS_jn)
+
+
+ impsG_cGH_jn <- impIngest("Seg-G_Camp-GH_BT_IMPS-June-2017.csv")
+  impsG_cGH_jn <- impProcess(impsG_cGH_jn,"G","GH",btsJune$G)
+ juneActivity <- rbind(juneActivity, impsG_cGH_jn)
+rm(impsG_cGH_jn)
+
+#Because BT impression report has only one column for each segment, single campaigns can be directly ingested but multiple campaigns for one segment have to be constructed then appended as if each campaign were also single
+
+
+#SEGMENT SY
+
+impsSY_cN_jn <- impIngest("Seg-SY_Camp-N_BT_IMPS-June-2017.csv")
+ impsSY_cN_jn <- impProcess(impsSY_cN_jn,"SY","N",btsJune$SY)
+ juneActivity <- rbind(juneActivity, impsSY_cN_jn)
+rm(impsSY_cN_jn)
+
+
+# Segment NPH 
+
+impsNPH_cAMP_jn <- impIngest("Seg-NPH_Camp-AMP_BT_IMPS-June-2017.csv")
+ impsNPH_cAMP_jn <- impProcess(impsNPH_cAMP_jn,"NPH","AMP",btsJune$NPH)
+ juneActivity <- rbind(juneActivity, impsNPH_cAMP_jn)
+rm(impsNPH_cAMP_jn)
+
+
+impsNPH_cFV_jn <- impIngest("Seg-NPH_Camp-FV_BT_IMPS-June-2017.csv")
+ impsNPH_cFV_jn <- impProcess(impsNPH_cFV_jn,"NPH","FV",btsJune$NPH)
+ juneActivity <- rbind(juneActivity, impsNPH_cFV_jn)
+rm(impsNPH_cFV_jn)
+
+# Segment EUR 
+impsEUR_cA_jn <- impIngest("Seg-EUR_Camp-A_BT_IMPS-June-2017.csv")
+ impsEUR_cA_jn <- impProcess(impsEUR_cA_jn,"EUR","A-Jn",btsJune$EUR)
+ juneActivity <- rbind(juneActivity, impsEUR_cA_jn)
+rm(impsEUR_cA_jn)
+
+
+impsEUR_cB_jn <- impIngest("Seg-EUR_Camp-B_BT_IMPS-June-2017.csv")
+ impsEUR_cB_jn <- impProcess(impsEUR_cB_jn,"EUR","B-Jn",btsJune$EUR)
+ juneActivity <- rbind(juneActivity, impsEUR_cB_jn)
+rm(impsEUR_cB_jn)
+
+juneActivity$Seg <- factor(juneActivity$Seg, c("C", "P", "E", "HO", "I", "R", "G","SY","NPH","EUR"))
+
+
+
+# to order DoW in correct order in displays 
+juneActivity$DoW <- factor(juneActivity$DoW, c("Friday", "Saturday", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"))
+
+str(juneActivity,give.attr = TRUE,give.head = TRUE)
+
+
+```
+
+## Total Impressions Per Campaign
+
+Assembling the data is a first step to investigation. With the necessary data assembled into a usable structure, we can start to get a sense of:
+
+* The relationship between BT segment population and ad impressions in a day. 
+* Differences in performance between segments -- which operate at different magnitudes.
+* Campaigns are individual ad campaigns, always within one segment. If they don't have imposed constraints, any significant variation between campaigns within a segment should be investigated.  
+
+
+```{r sizingSummaryCamps,  echo = FALSE, message = FALSE, warning = FALSE, warnings = FALSE}
+
+# calculate total impressions per campaign
+minisumm <- subset(juneActivity, select = c(Seg,Camp,Imps))
+
+mini1 <- minisumm %>% group_by(Seg,Camp) %>% summarise(Impressions = sum(Imps))
+mini1
+
+```
+
+
+## Total Impressions Per Segment
+
+This overview  provides an at-a-glance summary of total impressions at the segment level during the observation period.  
+
+```{r sizingSummarySegs,  echo = FALSE, message = FALSE, warning = FALSE, warnings = FALSE}
+
+#calculate total impressions by Segment
+mini2 <- mini1 %>% group_by(Seg) %>% summarise(campsRun = length(Seg),TotImps = sum(Impressions))
+mini2
+rm(mini1,mini2)
+```
+
+### What Does Impression per BT Population Look Like Graphed? 
+
+The following graphs depict two samples; one segment that ran one campaign, and one segment that ran four. The light, straight line for each campaign depicts the line of best fit for the campaign and segment data. Graphs for all segments are displayed in the appendix.
+
+```{r sampleGraphs, echo = FALSE, message = FALSE, warning = FALSE, warnings = FALSE}
+
+
+ #Show as a sample
+p <- chartSeg(impsC_jn,"C","Gray shading shows confidence interval of the smoothing linear model")
+p + geom_smooth() + # to show se area  
+     labs(title = "Segment C - Sample Daily Impression Data June 2017",
+       caption = "For each segment, this files loads impression numbers and BT population \n\ into a dataframe so they can be modeled into a line. ",
+        y = "Impressions") + 
+    scale_x_continuous(limits = c(0, 8250))  +
+    scale_y_continuous(limits = c(0, 3500)) 
+
+p <- chartSeg(allHO,"HO","Segment HO  - Four HO Campaigns Were Live \n\ Note that AM, the low green line, had special pacing constraints.")
+p + geom_smooth() + # to show se area  +
+  labs(        caption = "For each segment, this process loads impression numbers and BT population into a dataframe.\n\ Here is an example of a multi-campaign segment.  \n\ The other campaigns vary, but largely within a similar confidence range") + 
+    scale_x_continuous(limits = c(0, 8250))  +
+    scale_y_continuous(limits = c(0, 3500)) 
+
+```
+
+
+
+### Weekly Cycle
+
+There is a pronounced weekly visit cycle. Some experimenting showed that taking into account impression performance per day of week was more accurate than calculating potential impressions from weekly and monthly averages. For a glimpse of the traffic variations, here are all the June impressions, mapped by day of the week. 
+
+
+```{r DoWviz,  echo = FALSE, message = FALSE, warning = FALSE, warnings = FALSE}
+
+ggplot(aes(x=DoW, y=Imps, group = Camp, color = Camp), data=juneActivity) + 
+    geom_bar(aes(fill = Camp), stat="identity") +
+     labs(title = "Total Impressions June 2017 -  All Campaigns - by Days of the Week",
+       subtitle = "Monday June 1 - Friday June 30. A Visual Comparison",
+        caption = "June began on a Thursday and ended on a Friday, so Thursday and Friday have one more day of impressions than other days.\n\ Typically Wednesday and Thursday each yield 20% of all weekly impressions",
+        y = "Impressions")
+
+# Now chart mean by DoW
+ avgJuneDoW <- juneActivity  %>%  group_by(DoW,Seg) %>% summarise(Impressions = mean(Imps))
+
+ ggplot(aes(x=DoW, y=Impressions,group = Seg, color = Seg), data=avgJuneDoW) + 
+    geom_bar(aes(fill = Seg), stat="identity") +
+     labs(title = "Average Impressions per Segment by Day of Week, June 2017",
+       subtitle = "Monday June 1 - Friday June 30. A Visual Comparison",
+        caption = "Because this chart portrays averages, note the reduced scale \n\ with 12,500 maximum, vs. over 80,000 total above.",
+        y = "Impressions", x = "Day of the Week")
+ 
+ #The following will be graphed in the appendix
+ avgJuneDoW2 <- subset(avgJuneDoW, Seg == "R" | Seg == "NPH" )
+
+rm(avgJuneDoW)
+
+```
+
+
+## Group Data for Predictive Analysis 
+
+Now that observations have been collected to one dataframe, I need to collapse the observation data per segment so that I can organize and process data by campaign, creating linear models and predictions campaign by campaign within each segment. 
+
+```{r prep, echo = FALSE, message = FALSE, warning = FALSE, warnings = FALSE}
+
+# Make a df with one column per segment / campaign, so each campaign can get its own linear model
+juneActivity <- juneActivity %>% group_by(Seg, Camp) %>% nest()
+
+
+# use custom function bt_model to create plain linear models
+# creates a new dataframe building on Activity and adding a column with new linear models 
+juneActivity <- juneActivity %>% 
+  mutate(
+    linmodel = map(data, bt_model)
+  )
+
+# use broom to pull out some of the lm data points 
+
+juneActivity <- juneActivity %>%
+  mutate(
+    glance = map(linmodel, broom::glance),     #Model statistics - glance
+    tidy = map(linmodel, broom::tidy),     #Parameter statistics  - tidy
+    rsq = glance %>% map_dbl("r.squared"), #pull out r squared 
+    augment = map(linmodel, broom::augment)     # Observation statistics  - augment
+
+  )
+# View(juneActivity$glance[1])
+# View(juneActivity$augment[1])
+# juneActivity$tidy[1]
+
+
+
+# add notes on campaign restrictions from the campain info to impression activity
+# check the segments line up correctly
+
+ juneActivity$Consider <- juneImpsInfo$Consider
+
+
+```
+
+
+Our June activity dataframe is now significantly evolved from the six-variable list of observations we first collected. Rather than a dataframe of values, it is now adataframe of dataframes, so that it can contain more complex information such as the linear model for each campaign.
+
+
+The structure of the assembled data we'll analyze is 224 rows (or "observations"), with 6 columns: 
+
+* **Segments:**: Labeled Seg 
+* **Campaign:**:Labeled Camp
+* **data:**: BTPop / Imp/ Date / DoW data assembled earlier now stored in one cell for each campaign
+* **linmodel:**: The linear model for the campaign impression/BTpop data
+* **glance,tidy,rsq,augment**: Columns separately storing particular data points about the linear model
+* **Consider**: Lists codes for any constraints applied to the campaign at the requst of the advertiser. 
+
+```{r updatedDF, echo = FALSE, message = FALSE, warning = FALSE, warnings = FALSE}
+ head(juneActivity)
+
+
+
+```
+
+## How Well Does Can we Model Impression Numbers from Segment Size? 
+
+Now that we've run the linear models, we can visualize statistical summary data about impressions relative to segment population for each campaign in a segment. 
+
+### For Segments At Close to One in the Below Graph, Very Well!
+The below graphs show the "R Squared" of each campaign. R-squared is a statistic to indicate how well a linear model fits. Or, in our case, that means how well we can predict impression performance based on segment population alone, without other considerations. R squared is always between 0 and 1. The closer to 1 it is, the more perfectly the model fits. Where the R squared is low, more investigation is needed. 
+
+Segment-Campaign codes noted on the map indicate either serving restrictions or special pacing constraints. 
+
+The observation period was somewhat short, so fewer observations, especially in smaller segments, could also have an impact on poor fit. We can look to find other data to add to our modeling for smaller segments to make better predictions (for example, client company content publication patterns in relevant topics, or behavioral patterns more peculiar to that audience segment.) 
+
+Another question we can investigate is whether more or fewer total campaigns in a month impact predictability of individual campaign impression performance. 
+
+
+```{r overalViz, echo=FALSE, message=FALSE, warning=FALSE, warnings=FALSE}
+
+# Add a visualziation with annotated problem campaigns
+
+
+juneActivity %>% ggplot(aes(rsq, reorder(Seg,rsq, group = Camp, col = Cam))) +
+geom_point(aes(group = Camp, col = Camp, size = 1)) + 
+    labs(title = "How Accurate is Forecasting Impression Number \n\ by BT Segment Population Alone?",
+       subtitle = "Very Small and Serving-Restricted Campaigns Can Be Less Reliable for Forecasting.",
+        caption = "R-Squared value closest to one is best. \n\ *SP = Special Pacing. SR = Serving Restricted in some way. \n\ Serve restricted or special pacing campaigns will be omitted from forecasting calculations. \n\ Disregarding ULM in this report due to setup errors June 1-12. \n\ Small segments R and NPH have poor R-Squareds; this may improve with longer sampling periods.",
+        x = "R-Squared, or Predictability by Population Alone", y = "Campaigns, by Segments") +
+  annotate("text", label = "HO-AM SP*", x = 0.5, y = 4, color = "black")  +
+  annotate("text", label = "G-GH SR*", x = 0.72, y = 5, color = "black") +
+  annotate("text", label = "I-H SR*", x = 0.82, y = 9, color = "black") +
+  annotate("text", label = "P-GH SR*", x = 0.78, y = 7, color = "black")
+  
+
+
+
+
+```
+
+```{r summaryVis, echo = FALSE, message = FALSE, warning=FALSE, warnings=FALSE}
+
+#prepare for visualizations
+show_lm  = juneActivity %>% 
+   unnest(data)
+
+
+# by the old code: 
+ chart_title <- substitute(paste("Impressions Per BT Population, All June Campaigns"))
+   #chart_subtitle <- "Just In Case!"
+   p <- ggplot(show_lm, aes(x=BTpop, y=Imps, group=Seg, col=Seg)) +
+     geom_line() +
+     geom_point() + 
+         # https://www.r-bloggers.com/subtitles-and-captions-with-ggplot2-v-2-2-0
+    labs(title = chart_title,
+       subtitle = "Faceted by Segment, Color Coded by Segment",
+        #caption = "Caption!",
+        x = "BT Segment Population", y = "Impressions") +
+  # ggtitle(chart_title) +  # Set title
+ geom_smooth() +
+ geom_smooth(aes(group=Seg,col=Seg), se=FALSE, method="lm")  # add a linear model
+  
+
+p + # scale_x_continuous(limits = c(100, 2000))  +
+     # scale_y_continuous(limits = c(0, 800)) +
+facet_wrap(~Seg, labeller = labeller(label_both)) +  # option to add , scale_shape_manual() if need be
+  labs( caption = "For a Glimpse of Comparative Impression Scale \n\ Color-Coded by Segment")
+
+p <- chartSeg(show_lm,"All","Faceted by Segment")
+
+p + # scale_x_continuous(limits = c(100, 2000))  +
+     # scale_y_continuous(limits = c(0, 800)) +
+facet_wrap(~Seg) +  # option to add , scale_shape_manual() if need be
+  labs( title = "Impressions Per BT Population, All June Campaigns", 
+        subtitle = "Faceted by Segment \n\ Color-Coded by Campaign",
+        x = "BT Segment Population", y = "Impressions")
+
+```
+
+
+
+## Test Segment Populations
+
+Below I import segment populations of new test segments and use Set 1 and Set 2 as the inputs to predict impressions based on BT population of the test segment.  
+
+ 
+##Predictions Based on First Set of Test Segments
+ 
+Let's back up and get some context for the predictions and forecasts that will follow.  "Segments" in this section refers to test segments defined in the segment manager tool, rather than the live targeting segments meant everywhere else in this report. There are hundreds of test segments defined in the segment manager, all being monitored for size, consistency/volatility, and confidence of accuracy. 
+
+* A new set of qualifying segments became the live, targeted set on June 13. This is "Set 1" in the following analysis. 
+* Several of the largest, most likely segment definition choices for Set 2 were created at noon on June 13. Where those are used, there is only input data starting from June 14 (volume for earlier dates in June are averaged from the second half of June). 
+
+The input data for these segments is from reports I've generated listing the daily "real-time", active populations of these segments. These reports are pulled from the segmentation tool, Adobe Audience Manager, rather than the traffic analytics tool (since Set 2 isn't live, there's no traffic data for it). Data from these two reports has been comparable historically.
+I'll run predictions and estimates against the populations for each of these sets. 
+
+CAUTIONARY NOTE: The predictions apply to a month running a the same number of campaigns listed here. Cases where all possible campaigns are running would reduce overall performance by an amount that will be predictable with a bit more data.
+
+
+```{r predictSet1,  echo = FALSE, message = FALSE, warning = FALSE, warnings = FALSE}
+
+# Use custom function to intake test segment data to use for making predictions
+#run the function on the various raw BT population reports from Audience Manager
+# Data source below: Daily Trend report AAM in 1-day increments, transposed into csv files
+# Especially if you have changed qualifying segments during the month, this will ensure you use data for realtime segmented user volume each day of the month. 
+ 
+e1 <- list(newInput("Set1-E-RealTimeSegStats_for_Prediction-June.csv"))
+g1 <- list(newInput("Set1-G-RealTimeSegStats_for_Prediction-June.csv"))
+h1 <- list(newInput("Set1-HO-RealTimeSegStats_for_Prediction-June.csv"))
+i1 <- list(newInput("Set1-I-RealTimeSegStats_for_Prediction-June.csv"))
+nph1 <- list(newInput("Set1-NPH-RealTimeSegStats_for_Prediction-June.csv"))
+eur1<- list(newInput("Set1-EUR-RealTimeSegStats_for_Prediction-June.csv"))
+p1 <- list(newInput("Set1-P-RealTimeSegStats_for_Prediction-June.csv"))
+sy1 <- list(newInput("Set1-SY-RealTimeSegStats_for_Prediction-June.csv"))
+# ulm <- list(newInput("Set1-NowLive-ULM-REALTIME-STATSJune07-20.csv"))
+c <- list(newInput("Set1-C-RealTimeSegStats_for_Prediction-June.csv"))
+r1 <- list(newInput("Set1-R-RealTimeSegStats_for_Prediction-June.csv"))
+
+
+
+juneActivity$pred1Input <- c(c,p1,e1,h1,h1,h1,h1,i1,r1,g1,g1,sy1,nph1,nph1,eur1,eur1)
+
+# returns detailed prediction - a predicted value for each day of input
+juneActivity <- juneActivity %>%  
+  mutate(
+   forecast1 = map2(linmodel, pred1Input, predict)
+  )
+
+
+ 
+ #unnest so I can quickly see forecasts to use for visualiation 
+
+ show_forecast1 = juneActivity %>% 
+   unnest(forecast1)
+# prediction output is day by day  
+# total up the forecasts for each campaign
+ 
+forecast <-  show_forecast1 %>% group_by(Camp) %>% summarise(ImpForecast = sum(forecast1))
+
+# use custom function to cycle through juneActivity and summarize total forecast for each campaign for the total time period matching observations/inputs
+# in the case of mid-June, this period is a 2-week period.
+
+juneActivity <- juneActivity %>% 
+  mutate(
+    ImpFcstSet1 = map(forecast1, sumForecastData)
+  )
+
+#convert map output to numeric
+juneActivity$ImpFcstSet1 <- as.numeric(unlist(juneActivity$ImpFcstSet1))
+
+
+```
+
+Note: Most Test Set 2 segments have only existed from 6/14. So daily segment sizes input for 6/1 - 6/13 are an average of the sizes from the two-week period 6/14 - 6/27. 
+
+```{r predictSet2, echo = FALSE, message = FALSE, warning = FALSE, warnings = FALSE }
+
+
+# no new C b/c C is already live on Set 2; both forecasts are the same for C 
+
+e2 <- list(newInput("TestSet2-E-RealTimeSegStats-June.csv"))
+g2 <- list(newInput("TestSet2-G-RealTimeSegStats-June.csv"))
+h2 <- list(newInput("TestSet2-HO-RealTimeSegStats-June.csv"))
+i2 <- list(newInput("TestSet2-I-RealTimeSegStats-June.csv"))
+nph2 <- list(newInput("TestSet2-NPH-RealTimeSegStats-June.csv"))
+eur2<- list(newInput("TestSet2-EUR-RealTimeSegStats-June.csv"))
+p2 <- list(newInput("TestSet2-P-RealTimeSegStats-June.csv"))
+sy2 <- list(newInput("TestSet2-SY-RealTimeSegStats-June.csv"))
+# ulm <- list(newInput("TestSet2-ULM-RealTimeSegStats-June.csv"))
+r2 <- list(newInput("TestSet2-R-RealTimeSegStats-June.csv"))
+
+juneActivity$pred2Input <- c(c,p2,e2,h2,h2,h2,h2,i2,r2,g2,g2,sy2,nph2,nph2,eur2,eur2)
+
+ juneActivity <- juneActivity %>% 
+  mutate(
+   forecast2 = map2(linmodel, pred2Input, predict)  
+  )
+
+
+ 
+ #unnest so I can quickly see forecasts. 
+
+ # show_forecast2 = juneActivity %>% 
+ #  unnest(forecast2)
+ # might need the above for graphics but I don't need it for predictions
+
+# total up the forecasts for each campaign
+ 
+# forecastT2 <-  show_forecast2 %>% group_by(Camp) %>% summarise(ImpForecast = sum(forecast2))
+
+# use custom function to add total forecast for each campaign during the observation time period to the high level dataframe
+# in the case of mid-June, this period is a 2-week period.
+
+
+juneActivity <- juneActivity %>% 
+  mutate(
+    ImpFcstSet2 = map(forecast2, sumForecastData)
+  )
+#convert map output to numeric
+juneActivity$ImpFcstSet2 <- as.numeric(unlist(juneActivity$ImpFcstSet2))
+
+
+#create summary df to share relevant outputs  with other departments
+forSharing <- subset(juneActivity, select = c("Seg","Camp","rsq","Consider","ImpFcstSet1","ImpFcstSet2"))
+
+
+#Use the subset to display a meaninful part of what's been done above
+forSharing
+
+```
+
+
+
+
+## Estimates for Four Segments Where We Lack Observations
+
+Four segments were not live during our observation period:
+
+* D
+* EM
+* WH
+* PDS
+
+I will use the observations of other segment impression performance  to incorporate estimations of potential impression numbers for these segments.  All these have a maximum or one or two campaigns,  so we will use the coefficients for observations that ran 1-2 campaigns. This describes nearly all of our segments. After omitting coefficients for segment HO and for campaigns that had serving constraints, I'll average coefficients for "normal" 1-2-campaign segments. I'll use the mean coefficient to estimate potential performance of test segments for the four segments on which we have no impression data.
+
+
+```{r estimationsSetup, echo = FALSE, message = FALSE, warning = FALSE, warnings = FALSE}
+
+#Need to determine some rules based on the 'clean' impression data (not using any of the restricted serving examples) to create generic multipliers or values to run predictions based solely on segment population data in the absence of unique impression data for these segments 
+# determine coefficients to use 
+
+show_lm_estimate <- juneActivity %>% 
+   unnest(tidy)
+
+#show_lm_estimate <- subset(show_lm_estimate, select = c("Seg","Camp","rsq","term","Estimate", "Consider","ImpFcstSet1","ImpFcstSet2"))
+
+ 
+# Prep summary df forSharing for two estimates columns, from Set 1 and Set 2 test segment populations
+# For ease of reading even though not adding data until later, 
+# I want these before the detailed modeling statistics
+forSharing$Est1 <- NA
+forSharing$Est2 <- NA
+forSharing$Est1 <- as.integer(forSharing$Est1)
+forSharing$Est2 <- as.integer(forSharing$Est2)
+                                   
+# exclude intercept  to use just BTpop estimate coefficient
+use_estimates <- subset(show_lm_estimate, term == "BTpop")
+forSharing <- cbind(forSharing, subset(use_estimates,  select = c("term","estimate","std.error","statistic","p.value")))
+
+forSharing$estimate <- round(forSharing$estimate, digits = 3)
+forSharing$std.error <- round(forSharing$std.error, digits = 3)
+forSharing$statistic <- round(forSharing$statistic, digits = 3)
+
+
+```
+
+I will now use the estimate associated only for segments running 1-2 campaigns, with no considerations, (so, eliminating campaigns P - GH, HO-AM, I-H, and G-GH) for the estimates.
+
+Finally, I will append those estimates to a summary table presenting the Forecasts where a prediction was calculated and Estimates where a prediction was estimated.
+
+
+```{r estimations, echo = FALSE, message = FALSE, warning = FALSE, warnings = FALSE, width=100}
+
+# To create estimates, only want rows without special considerations
+use_estimates <- use_estimates[is.na(use_estimates$Consider),] 
+#show in markdown document the segments being averaged
+subset(use_estimates, Seg != "HO") 
+
+# when column exists minimize campnum for estimates. 
+
+# Identify tiers of potential campaigns
+# Where CampNum is 1-2 use coefficient_1
+# Where CampNum is 3-4 use coefficient_2
+# Where CampNum is 5 use coefficient_3
+# The four segments we need to estimate are all 1-2 campaigns therefore use coefficient_1
+
+
+#Calculate coefficient to use as estimate multiplier on remaining test segments
+#All non-restrictedJune tests but one use coefficient_1
+coef1df <- subset(use_estimates, Seg != "HO")
+# determine my estimate coefficient
+coefficient_1 <- mean(coef1df$estimate)
+est.error <- round(mean(coef1df$std.error), digits = 3)
+
+# This is a very rough way to get an estimate
+#test to confirm calculations
+        # d1 <- read.csv("Set1-NowLive-D-REALTIME-STATSJune07-20.csv")
+        # sum(d1$BTpop)
+        # nrow(d1)
+        # (sum(d1$BTpop))/nrow(d1)
+        # mean(d1$BTpop)
+        # dest <- round(((sum(d1$BTpop))/nrow(d1))*30*coefficient_1,0)
+         # sprintf("Set1 D impression estimate is %s",dest)
+
+
+ 
+
+# ESTIMATE SEGMENT WH
+# Determine estimate from two different test segments using custom function
+temp1 <- roughEst("TestSet1-WH-RealTimeSegStats-June.csv",coefficient_1)
+temp2 <- roughEst("TestSet2-WH-RealTimeSegStats-June.csv",coefficient_1)
+
+# Add to summary table 
+forSharing <- rbind(forSharing, data.frame(Seg = "WH",Camp = "EST", rsq = NA, Consider = "EST", ImpFcstSet1 = NA, ImpFcstSet2 = NA, term= NA, estimate = coefficient_1,  std.error = est.error, statistic = NA, p.value = NA, Est1 = temp1, Est2 = temp2))
+
+
+# ESTIMATE SEGMENT D
+# Determine estimate from two different test sets using custom function
+
+temp1 <- roughEst("TestSet1-D-RealTimeSegStats-June.csv",coefficient_1)
+
+temp2 <- roughEst("TestSet2-D-RealTimeSegStats-June.csv",coefficient_1)
+# sprintf("Set 2 D impression estimate is %s",temp)
+ #  append to forSharing summary df the segment and associated estimate
+
+forSharing <- rbind(forSharing, data.frame(Seg = "D",Camp = "EST", rsq = NA, Consider = "EST", ImpFcstSet1 = NA, ImpFcstSet2 = NA, term= NA, estimate = coefficient_1,  std.error = est.error, statistic = NA, p.value = NA, Est1 = temp1, Est2 = temp2))
+
+testa <- c(Seg = "D",Camp = "EST", Consider = "EST", ImpFcstSet1 = NA, ImpFcstSet2 = NA, term= NA, estimate = coefficient_1,  std.error = est.error, statistic = NA, p.value = NA, Est1 = temp1, Est2 = temp2)
+
+ 
+ #ESTIMATE SEGMENT EM
+
+temp1 <- roughEst("Set1-EM-RealTimeSegStats-June.csv",coefficient_1)
+
+temp2 <- roughEst("Set2-EM-RealTimeSegStats-June.csv",coefficient_1)
+
+# Add to summary table 
+forSharing <- rbind(forSharing, data.frame(Seg = "EM",Camp = "EST", rsq = NA, Consider = "EST", ImpFcstSet1 = NA, ImpFcstSet2 = NA, term= NA, estimate = coefficient_1,  std.error = est.error, statistic = NA, p.value = NA, Est1 = temp1, Est2 = temp2))
+
+
+#ESTIMATE SEGMENT PDS
+
+temp1 <- roughEst("TestSet1-PDS-RealTimeSegStats-June.csV",coefficient_1)
+
+temp2 <- roughEst("TestSet2-PDS-RealTimeSegStats-June.csv",coefficient_1)
+# Add to summary table 
+forSharing <- rbind(forSharing, data.frame(Seg = "PDS",Camp = "EST", rsq = NA, Consider = "EST", ImpFcstSet1 = NA, ImpFcstSet2 = NA, term= NA, estimate = coefficient_1,  std.error = est.error, statistic = NA, p.value = NA, Est1 = temp1, Est2 = temp2))
+
+forSharing$estimate <- round(forSharing$estimate, digits = 3)
+
+#display the output in this report display without some of the statistics to keep data display from wrapping in a confusing way
+subset(forSharing, select = -c(statistic, p.value))
+
+
+```
+
+Note that the average linear model estimate for segments running 1-2 campaigns is .343, and the average estimate for HO, running four campaigns, is .239. This may generalize to a reduction of roughly .1 when more campaigns are running than there are ad positions on ad-bearing pages. We'll return to this in the future opportunities section. 
+
+## Create Output
+To easily share with other departments, I will write a subset of the data containing the forecast and estimate summaries for each campaign to a csv file. 
+
+
+```{r output, echo = FALSE}
+
+ write.csv(forSharing, file="juneforecastOutput.csv")
+
+
+```
+  
+
+## Future Opportunities 
+The data collected so far is most informative for segments with a simultaneous campaign maximum of 1-2, since that's the number of unrestricted campaigns we were able to collect reliable data on for forecasting or estimating. We have one sample with four HO campaigns and no samples with 5 simultaneous campaigns. Because there are typically 2-3 ad positions per page, running 5 simultaneous campaigns will require more users (with more page views). It's a third tier of forecasting we don't have any data on yet. It will be important to collect more data over time for accurate forecasting and estimating with 5-campaign segments. 
+
+As we collect and analyze data with this method going forward, we will be able to add observations and predictive analysis not just month to month impression performance to BT segment population, but on the impact of:
+ 
+1. Performance of number of campaigns live in a segment in a given month. I'm calling this "Tiers": 1-2, vs. 3-4, vs. 5 campaigns live
+2. How performance varies depending on total overall number of campaigns running in a given month. 
+3. Seasonal patterns. 
+
+As an example of campaign tiering it item one, let's do some gross estimation based on very limited observation. For simplicity let's call it running four campaigns when there are only 2 ad positions available. If we say this added tier reduces impression performance by roughly .1, we might guess that going to a third tier and running 5 campaigns might reduce impression performance by .2 for that segment.
+
+For example, the C segment forecast above is 113,888 with segment C running one campaign. Estimated performance for C with one campaign is .368 impressions per each user in the active BT segment population. If C were running five campaigns live, with the same segment population, that estimate goes down to about .168. This would make the per campaign forecast *while running five campaigns* as low as 51,992. This is why it will be important to continue observing and measuring performance, especially when there are more simultaneous campaigns than we've been able to test so far. 
+
+
+# APPENDIX: A Deeper Look at Data for Each Segment
+
+
+Now I'll break the data back out to make it easier to look a little deeper at performance for each segment. 
+
+The effects of special pacing and serving restrictions on P-GH, HO-AM, I-H,and G-GH are visible here.  
+
+## Overal Visualizations 
+
+```{r appVisAll, echo = FALSE, message = FALSE, warning=FALSE, warnings=FALSE}
+
+show_lm  %>% ggplot(aes(BTpop, reorder(Imps,BTpop, group = Camp))) +
+geom_point(aes(color = Camp)) +
+  labs(title = "Impression Performance for All Campaigns Across All Segments June 2017, 2017",
+       subtitle = "For An Overall Visual",
+       #caption = " ",
+       x="BT Segment Size", y = "Impressions") + 
+  theme(
+ axis.text.y = element_blank(), 
+  axis.ticks.y = element_blank()) 
+
+
+show_lm  %>% ggplot(aes(BTpop, reorder(Imps,BTpop, group = Camp))) +
+geom_point(aes(color = Camp)) +
+  facet_wrap(~DoW)  +
+  labs(title = "Impression Performance, All Campaigns, By Day of The Week",
+       subtitle = "Weekly Pattern Is Similar Across Segments",
+       #caption = " ",
+       x="BT Segment Size", y = "Impressions") + 
+  theme(
+  axis.text.y = element_blank(), 
+  axis.ticks.y = element_blank()) 
+                    
+
+show_lm  %>% ggplot(aes(BTpop, reorder(Imps,BTpop, group = Camp))) +
+geom_point(aes(color = Camp)) +
+  facet_wrap(~Seg)    +
+  labs(title = "Impression Performance, All Campaigns, By Segment",
+       subtitle = "Different Segments Live at Different Spots on the Scale",
+       #caption = " ",
+       x="BT Segment Size", y = "Impressions")   + 
+  theme(
+  axis.text.y = element_blank(), 
+  axis.ticks.y = element_blank()) 
+  
+```
+
+## Larger Scale Segments
+
+
+
+
+```{r appVisLgr, echo = FALSE, message = FALSE, warning=FALSE, warnings=FALSE}
+
+# Create separate displays for key segments
+
+#Create a for loop using the targets lis to cycle through the needed segments; have to account for if that segment is not in the list. 
+
+chart_subtitle <- paste("June 2017")
+
+tempshow <- subset(show_lm, Seg == "C")
+chartSegMaxScale(tempshow,"C",chart_subtitle)
+
+tempshow <- subset(show_lm, Seg == "P")
+chartSegMaxScale(tempshow,"P",chart_subtitle) +
+  annotate("text", label = "P-GH SR*", x = 7000, y = 500, color = "darkred")
+
+
+tempshow <- subset(show_lm, Seg == "HO")
+chartSeg(tempshow,"HO",chart_subtitle) +
+  annotate("text", label = "HO-AM SP*", x = 6000, y = 500) + 
+    scale_x_continuous(limits = c(0, 8250))  +
+    scale_y_continuous(limits = c(0, 3500)) 
+  
+
+
+
+```
+  
+## Smaller Scale Segments 
+
+```{r appVisSm, echo = FALSE, message = FALSE, warning=FALSE, warnings=FALSE}
+
+# Create separate displays for key segments
+
+#Create a for loop using the targets lis to cycle through the needed segments; have to account for if that segment is not in the list. 
+
+tempshow <- subset(show_lm, Seg == "E")
+chartSegMinScale(tempshow,"E",chart_subtitle)
+
+
+tempshow <- subset(show_lm, Seg == "I")
+chartSegMinScale(tempshow,"I",chart_subtitle) +
+  annotate("text", label = "I-H SR*", x = 2500, y = 100, color = "darkred") 
+
+
+
+tempshow <- subset(show_lm, Seg == "G")
+chartSegMinScale(tempshow,"G",chart_subtitle)+
+  annotate("text", label = "G-GH SR*", x = 2500, y = 100, color = "red")
+
+
+tempshow <- subset(show_lm, Seg == "SY")
+chartSegMinScale(tempshow,"SY",chart_subtitle)
+
+tempshow <- subset(show_lm, Seg == "NPH")
+chartSegMinScale(tempshow,"NPH",chart_subtitle)
+
+
+tempshow <- subset(show_lm, Seg == "EUR")
+chartSegMinScale(tempshow,"EUR",chart_subtitle)
+
+
+
+# add for full June stats, n/a for midJune
+#tempshow <- subset(show_lm, Seg == "ULM")
+#chartSeg(tempshow,"ULM",chart_subtitle)
+
+  
+```
+  
+## The Smallest Segments: R Investigation
+
+```{r appVisR, echo = FALSE, message = FALSE, warning=FALSE, warnings=FALSE}
+
+
+
+# R-squared wasn't great so I took another deeper look
+# But I think the issue is just small, volatile segment size and segment behavior
+tempshow <- subset(show_lm, Seg == "R")
+
+ pr <- ggplot(tempshow, aes(x=BTpop, y=Imps, group=Camp, col=Camp)) +
+    geom_point(size=0.8) + 
+    labs(title = "Impressions Per BT Population,June 2017, Segment R",
+         subtitle = "Variability Looks High, But Partly Due to Small Scale \n\ Low Activity, Low Impressions Compared to Other Segments during this observation period",
+         # caption = "Caption!",
+         x = "BT Segment Population", y = "Impressions") +
+    # geom_smooth(se=FALSE) +
+    geom_smooth(aes(group=Camp, col=Camp), se=FALSE, method="lm", size=0.65)  + 
+    scale_x_continuous(limits = c(0, 3500))  +
+    scale_y_continuous(limits = c(0, 1250)) 
+ pr
+ 
+  ggplot(aes(x=DoW, y=Impressions,group = Seg, color = Seg), data=avgJuneDoW2) + 
+    geom_bar(aes(fill = Seg), stat="identity") +
+     labs(title = "Average Impressions per Segment by Day of Week, Smallest Segments only",
+       subtitle = "R and NPH",
+        #caption = " ",
+        y = "Impressions", x = "Day of the Week") +
+      scale_y_continuous(limits = c(0, 12500))
+  
+ # Scale Demonstration
+ tempshowDoW <- tempshow  %>%  group_by(DoW) %>% summarise(Impressions = mean(Imps))
+ ggplot(aes(x=DoW, y=Impressions), data=tempshowDoW) + 
+    geom_bar(stat="identity") +
+   labs(title = "Average Number Impressions by Day of Week - Segment R",
+       subtitle = "Monday June 1 - Friday June 30. A Visual Comparison",
+       # caption = " ",
+        y = "Day of the Week")+
+      scale_y_continuous(limits = c(0, 80000))
+
+pr +
+    facet_wrap(~DoW)  
+
+
+  
+```
+  
+  

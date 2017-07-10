@@ -1,0 +1,17 @@
+Segment,Campaign,TowerSupp,AonSR,CampNum,Consider
+C,H,N,N,1,NA
+P,GH,N,N,1,SR
+E,L-Jn,N,N,1,NA
+HO,AD,Y,Y,4,NA
+HO,AM,N,N,4,SP
+HO,K,N,Y,4,NA
+HO,N-Jn,N,Y,4,NA
+I,H,N,N,1,SR
+R,H,N,N,1,NA
+G,BS,Y,Y,2,NA
+G,GH,N,N,2,SR
+SY,N,Y,N,1,NA
+NPH,AMP,N,N,2,NA
+NPH,FV,Y,Y,2,NA
+EUR,A-Jn,N,N,2,NA
+EUR,B-Jn,N,Y,2,NA
