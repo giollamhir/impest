@@ -758,17 +758,36 @@ temp2 <- roughEst("TestSet2-PDS-RealTimeSegStats-June.csv",coefficient_1)
 forSharing <- rbind(forSharing, data.frame(Seg = "PDS",Camp = "EST", rsq = NA, Consider = "EST", ImpFcstSet1 = NA, ImpFcstSet2 = NA, term= NA, estimate = coefficient_1,  std.error = est.error, statistic = NA, p.value = NA, Est1 = temp1, Est2 = temp2))
 
 forSharing$estimate <- round(forSharing$estimate, digits = 3)
+forSharing$CampMax <- targets$Campaigns[match(forSharing$Seg, targets$Segment)]
 
 #display the output in this report display without some of the statistics to keep data display from wrapping in a confusing way
 subset(forSharing, select = -c(statistic, p.value))
+
+
+# Test for a rough HO estimate -- just for reference
+look <- subset(show_lm_estimate, select = c(Seg,Camp,Consider,term,estimate,ImpFcstSet1,ImpFcstSet2))
+look <- subset(look, term == "BTpop")
+lookHO <- subset(look, Seg == "HO")
+lookHO <- subset(lookHO, is.na(Consider))
+roughEstHO1 <- ((mean(lookHO$estimate)) - .1) * mean(lookHO$ImpFcstSet1)
+roughEstHO2 <- ((mean(lookHO$estimate)) - .1) * mean(lookHO$ImpFcstSet2)
+# Comes out to about 8,000 with current segment size. Too rough of an estimate. 
+# Need more test/observation, and possibly to change test segments.
 
 
 ```
 
 Note that the average linear model estimate for segments running 1-2 campaigns is .343, and the average estimate for HO, running four campaigns, is .239. This may generalize to a reduction of roughly .1 when more campaigns are running than there are ad positions on ad-bearing pages. We'll return to this in the future opportunities section. 
 
+
 ## Create Output
 To easily share with other departments, I will write a subset of the data containing the forecast and estimate summaries for each campaign to a csv file. 
+
+Any number in either the prediction or estimate column of this output indicates how many impressions per month we can anticipate for the coming year. These projections can be used in marketing materials, sales discussions, and so on. Bear in mind the caveat that we haven't seen the actual impact of 5 campaigns.
+
+*_If all campaigns are full,_ we made the rough estimate for Segment C that impressions would be closer to 50,000 impressions per campaign  at 5 campaigns. 
+* A similar estimate would apply to Segment P
+* HO had four campaigns running. We need to find out what happens when HO runs five campaigns live. Our rough estimate would put the fifth campaign at around 8,000 impressions
 
 
 ```{r output, echo = FALSE}
