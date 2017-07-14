@@ -3,8 +3,8 @@ title: "Targeting Segment Size Forecasting to Meet Higher Impression Targets"
 author: "Giollamhir"
 date: "July 8, 2017"
 output:
-  pdf_document: default
   html_document: default
+  pdf_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -88,7 +88,7 @@ June impressions were reported in the typical  raw format that will need to be i
 
 First, a summary of campaigns that ran through June. Aside from the overall considerations listed above, there are also sometimes special requests from the client on how we serve ads that impose their own constraints. The table below lists what campaigns actually  ran (not all segments always run, and not necessarily to the maximum number of campaigns per segment).
 
-* "CampNum" denotes total potential campaigns for that segment
+* "CampNum" denotes the total campaigns that _actually ran_ this month for that segment. 
 
 * The *Consider* column indicates any serving considerations (impressions will be lower due to constraints): SR means serving restrictions, and SP means Special Pacing.
 
@@ -341,7 +341,7 @@ ggplot(aes(x=DoW, y=Imps, group = Camp, color = Camp), data=juneActivity) +
     geom_bar(aes(fill = Camp), stat="identity") +
      labs(title = "Total Impressions June 2017 -  All Campaigns - by Days of the Week",
        subtitle = "Monday June 1 - Friday June 30. A Visual Comparison",
-        caption = "June began on a Thursday and ended on a Friday, so Thursday and Friday have one more day of impressions than other days.\n\ Typically Wednesday and Thursday each yield 20% of all weekly impressions",
+        caption = "June began on a Thursday and ended on a Friday, so Thursday and Friday\n\ have one more day of impressions than other days.\n\ Typically Wednesday and Thursday each yield 20% of all weekly impressions",
         y = "Impressions")
 
 # Now chart mean by DoW
@@ -351,7 +351,7 @@ ggplot(aes(x=DoW, y=Imps, group = Camp, color = Camp), data=juneActivity) +
     geom_bar(aes(fill = Seg), stat="identity") +
      labs(title = "Average Impressions per Segment by Day of Week, June 2017",
        subtitle = "Monday June 1 - Friday June 30. A Visual Comparison",
-        caption = "Because this chart portrays averages, note the reduced scale \n\ with 12,500 maximum, vs. over 80,000 total above.",
+        caption = "Because this chart portrays averages per day of the week, note the reduced scale \n\ with 12,500 maximum, vs. over 80,000 total above.",
         y = "Impressions", x = "Day of the Week")
  
  #The following will be graphed in the appendix
